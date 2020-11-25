@@ -69,10 +69,10 @@ Using the BLAS build with ESSL and 4 threads gives a much better CPU result.
 
 Continue on to the next section to see how to approach porting this program to GPUs.
 
-### Steps to Porting
+### Porting to GPU
 In this section, we will cover a sequence of steps to port this simple code to GPU with OpenACC and CUDA Fortran. While this code is simple, this sequence of steps is fairly general, and can be applied to other more complex code porting efforts. The final ported code is in the `serial/accelerated` directory if you want to skip forward and try that out.
 
-Step 1: Profile
+#### Step 1: Profile
 Profiling is a useful tool to guide porting and optimization efforts by enabling you to get a better understanding of where time is being spent in your code and set priorities for what to port. In complex codes, you may not be able to port everything to GPU so it is good to spend development time porting the most costly sections first. 
 Nsight Systems is a profiling tool provided by NVIDIA that can be used for this task. While it is a profiling tool for GPUs, it can be used to initially profile CPU codes with the use of NVTX ranges. NVTX ranges can be added to the code to annotate segments of runtime with a name, and these ranges will show up in the resulting view of the profile.
 To add NVTX ranges to the baseline CPU code, copy the `nvtx.f90` file from the `accelerated` directory and use it to add ranges to the CPU code with `nvtxStartRange` and `nvtxEndRange` subroutines. Look for examples in the `accelerated` directory source to see how this is done. When you have ranges added to the baseline code, recompile. You will need to add a link to the `libnvToolsExt.so` library, see the `Makefile` in `accelerated` for an example of how this is done. and run using the profiler using the following command:
@@ -83,7 +83,7 @@ You can copy the resulting `cpu_blas_profile.qdrep` file to your local system an
 
 To use our sample solution, go to the `accelerated` directory and type `make`. Run the `main_cpu_blas` executable in that directory to generate a CPU profile with NVTX ranges.
 
-Step 2: Port loops using OpenACC
+#### Step 2: Port loops using OpenACC
 The next step is to start adding some OpenACC directives to port loops to GPU. In this example, there are a total of 5 loops to port (3 in `RunCG`, 1 in `symmatvec` and 1 in `dot`). See if you can apply OpenACC parallel loop directives to port these loops. When you are done, recompile with code with the `-acc` compiler flags to enable OpenACC directives. Optionally, add the `-Minfo=accel` flag to get more verbose output about how the compiler is applying OpenACC to the ported loops. 
 
 To use our sample solution for this step, go to the `accelerated` directory and run the `main_gpu_v1` binary. Running this on the node should generate the following output:
@@ -111,7 +111,7 @@ $ ./main_gpu_v1
 ```
 We see that with just applying OpenACC to the loops only with no other changes, the wall time is no better than the serial CPU baseline without BLAS and significantly worse than the baseline with BLAS! Run Nsight Systems to generate a profile of this case to investigate what is going on. What you will see is a lot of data movement between the GPU and CPU taking up a significant portion of the runtime.
 
-Step 3: Data Management
+#### Step 3: Data Management
 With the loops ported to run on the GPU, the next step is to deal with memory movement. Without any explicit instructions, OpenACC will generate many host-to-device and device-to-host memory transfers, at worse before and after every OpenACC kernel. We can handle data in two ways:
 1. Using OpenACC Data directives
 2. CUDA Fortran array attributes (device and/or managed)
@@ -144,7 +144,7 @@ $ ./main_gpu_v2
 
 With improved data management, we achieve a much faster result, with good speedup on the GPU for this problem over the CPU results.
 
-Step 4: Using libraries
+#### Step 4: Using libraries
 Now we will look into porting the code path using BLAS by replacing BLAS calls with cuBLAS, the GPU-accelerated BLAS library provided by NVIDIA. Luckily, the `nvfortran` compiler provides a simple to use `cublas` module with overloaded interfaces for common BLAS routines, like `dgemv` and `ddot` used in this sample. All that is required is to add the line `use cublas` to the subroutine/function using the BLAS call, and ensuring that GPU buffers are passed as arguments to the routine. These can either be `device` or `managed` CUDA Fortran arrays or GPU pointers passed to the routine in OpenACC using the `acc host_data use_device(...)` directive. 
 To use our sample solution for this step, go to the `accelerated` directory and run the `main_gpu_v2_blas` binary. Look at the `symmatvec` and `dot` subroutines to see the required changes. Running this binary on the node should generate the following output:
 ```
