@@ -19,11 +19,7 @@ module util
 
       ! Generate complete random SPD matrix A
       allocate(tmp(N,N))
-      do j = 1, N
-        do i = 1, N
-          call random_number(tmp(i,j))
-        end do
-      end do
+      call random_number(tmp)
 
       do j = 1, N
         do i = 1, N
@@ -34,9 +30,8 @@ module util
       deallocate(tmp)
 
       ! Generate random RHS vector b
-      do i = 1, N
-        call random_number(b(i))
-      enddo
+      call random_number(b)
+
     end subroutine GenerateCGInput
 end module
 

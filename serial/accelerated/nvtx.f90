@@ -49,9 +49,7 @@ contains
     integer, optional:: id
     type(nvtxEventAttributes):: event
     integer :: istat
-#ifdef USE_GPU
     !$acc wait
-#endif
 
     tempName=trim(name)//c_null_char
 
@@ -66,9 +64,7 @@ contains
 
   subroutine nvtxEndRange
     integer :: istat
-#ifdef USE_GPU
     !$acc wait
-#endif
     call nvtxRangePop
   end subroutine nvtxEndRange
 end module nvtx
