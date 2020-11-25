@@ -267,7 +267,6 @@ Comparing the wall times across the runs, we see that the strong scaling efficie
 $ mpirun -np 4 --map-by ppr:2:socket nsys profile -o gpu_mpi.rank%q{OMPI_COMM_WORLD_RANK} ./main_gpu_mpi
 ```
 This command will generate a profile output for each rank separately, with the `%q{...}` notation in the output string used to add an exported environment variable to the name. Download one of the resulting profiles to to a local system, load it in the Nsight Systems GUI, and look for the `Allreduce` NVTX ranges we've added to show the allreduce time. What you'll find is that the `MPI_Allreduce` is generating a device-to-host copy, followed by a CPU allreduce, followed by a host-to-device copy, which is inefficient and limiting strong scaling.
-```
 
 ### Using NCCL
 Instead of using MPI for the allreduce, we can try to use functionality from the NVIDIA Collective Commuincation Library (NCCL) instead. NCCL has highly optimized GPU collectives (e.g. allreduce) as well as support for point-to-point messaging (e.g. send/recv). Replacing `MPI_Allreduce` with `ncclAllReduce` is straightforward as the APIs are very similar. 
