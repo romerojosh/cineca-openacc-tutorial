@@ -26,11 +26,7 @@ module util
 
       ! Generate complete random SPD matrix A
       allocate(tmp(N,N))
-      do j = 1, N
-        do i = 1, N
-          call random_number(tmp(i,j))
-        end do
-      end do
+      call random_number(tmp)
 
       ! Copy row slab (Note: this is exactly the transposed A we need for the matvec)
       do j = 1, N
@@ -42,15 +38,14 @@ module util
       deallocate(tmp)
 
       ! Generate random RHS vector b
-      do i = 1, N
-        call random_number(b(i))
-      enddo
+      call random_number(b)
+
     end subroutine GenerateCGInput
 end module
 
 module CG_routines
   use nvtx
-#ifdef USE_GPU
+#ifdef USE_CUBLAS
   use cublas
 #endif
   use constants
@@ -69,7 +64,7 @@ module CG_routines
     real(WP) :: s
 
     call nvtxStartRange("symmatvec", 22)
-#ifndef USE_BLAS
+#if !defined(USE_BLAS) && !defined(USE_CUBLAS)
     ! Note: Since A is symmetric, we can use the "transpose"
     ! for better memory access here
     !$acc parallel loop gang private(s)
@@ -95,7 +90,7 @@ module CG_routines
   end subroutine
 
   function dot(N, x, y) result(r)
-#ifdef USE_GPU
+#ifdef USE_CUBLAS
   use cublas
 #endif
     implicit none
@@ -104,14 +99,14 @@ module CG_routines
 #ifdef USE_CUDA_DATA
     attributes(managed) :: x, y
 #endif
-#ifndef USE_GPU
+#ifdef USE_BLAS
     real(WP) :: ddot
 #endif
     real(WP) :: r
     integer :: i
 
     call nvtxStartRange("dot", 22)
-#ifndef USE_BLAS
+#if !defined(USE_BLAS) && !defined(USE_CUBLAS)
     r = 0.d0
     !$acc parallel loop
     do i = 1, N
@@ -133,7 +128,6 @@ module CG_routines
     use parallel
     implicit none
     integer, intent(in) :: N, max_iter
-    !real(WP), intent(in) :: A(N, N), b(N), tol
     real(WP), intent(in) :: A(N/nranks, N), b(N), tol
     real(WP), intent(inout) :: x(N)
 

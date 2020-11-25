@@ -170,3 +170,190 @@ $ ./main_gpu_v2_blas
    0.3334710494981544
 ```
 Using cuBLAS doesn't have a huge impact on performance, indicating that our OpenACC loops are performing as well as native libraries for the input matrix and arrays sizes in our sample. In general however, it is good to look for existing GPU library implementations of existing computations in your code before implementing things yourself.
+
+## Parallel Example
+Inside the `parallel` directory, there are examples of parallel versions of this simple CG code. To distribute the problem, the `A` matrix is split between processes into row-slabs (which can also be interpreted as column slabs in row-major data layout due to the symmetry of A). Then, when a matrix-vector multiplication is performed, each rank multiplies its set of matrix columns by a segment of the vector, producing a partial result. These partial results are then combined using an allreduce operation. As such, this allreduce operation is the only communucation routine we need to consider in this example.
+
+The `parallel` folder contains two subdirectories, `MPI` and `NCCL`, which contain implementations using MPI and NCCL respectively. 
+
+### Using MPI
+Navigate into the `MPI` directory and take a look at code in `main.f90` and `RunCG` in `modules.f90`. In `main.f90`, you will find initialization code related to MPI that you will be familiar with from CPU programs, but also a section of code related to setting the GPU device. In this section, we assign GPU devices to ranks using `cudaSetDevice` and also `acc_set_device_num`, which covers the device that will be used by both CUDA Fortran and also OpenACC. In this example, we set the device for each process to the `local_rank`, which is a fairly typical set up. 
+
+After this, we can take a look at the `MPI_Allreduce` calls in `RunCG` to combine the partial matrix-vector sums across ranks. Since we are using a CUDA-aware MPI implementation, we can simply pass GPU arrays directly to the `MPI_Allreduce` call. For OpenACC, this is achieved by using the `acc host_data use_device(Ax)` directive, but here we are using `managed` arrays from CUDA Fortran. 
+
+Type `make` to compile the MPI parallelized program, `main_gpu_mpi`. To run on the M100 node, use the following command:
+```
+$ mpirun -np <N>  --map-by ppr:2:socket ./main_gpu_mpi
+```
+where `N` can be 1, 2, or 4. The `--map-by` argument is useful to ensure that processes are bound to the appropriate CPU socket/cores for best performance. This setting is requesting 2 processes per socket.
+
+Running for `N` = 1, 2 and 4 results in the following:
+```
+$ mpirun -np 1 --map-by ppr:2:socket ./main_gpu_mpi
+ Running parallel version on            1 ranks...
+ rank            0 using GPU            0
+ Running Warmup....
+ Iteration             1  residual:     11.63451702489180
+ Iteration             2  residual:    1.9845558837315817E-002
+ Iteration             3  residual:    3.1534373809098760E-005
+ Iteration             4  residual:    5.0153211704417186E-008
+ Iteration             5  residual:    7.9933529702152848E-011
+ Iteration             6  residual:    1.2717205406485772E-013
+ Iteration             7  residual:    2.0605670154693845E-016
+ Running Test....
+ Iteration             1  residual:     11.63451702489180
+ Iteration             2  residual:    1.9845558837315817E-002
+ Iteration             3  residual:    3.1534373809098760E-005
+ Iteration             4  residual:    5.0153211704417186E-008
+ Iteration             5  residual:    7.9933529702152848E-011
+ Iteration             6  residual:    1.2717205406485772E-013
+ Iteration             7  residual:    2.0605670154693845E-016
+ Wall time:    2.1522998809814453E-002
+ x:   -1.0226403871012107E-005   5.0902512156439025E-005
+   0.3334710494981550
+
+$ mpirun -np 2 --map-by ppr:2:socket ./main_gpu_mpi
+ Running parallel version on            2 ranks...
+ rank            0 using GPU            0
+ rank            1 using GPU            1
+ Running Warmup....
+ Iteration             1  residual:     11.63451702489180
+ Iteration             2  residual:    1.9845558837315827E-002
+ Iteration             3  residual:    3.1534373809098828E-005
+ Iteration             4  residual:    5.0153211704417147E-008
+ Iteration             5  residual:    7.9933529702654869E-011
+ Iteration             6  residual:    1.2717213308682699E-013
+ Iteration             7  residual:    2.1790798387780098E-016
+ Running Test....
+ Iteration             1  residual:     11.63451702489180
+ Iteration             2  residual:    1.9845558837315827E-002
+ Iteration             3  residual:    3.1534373809098828E-005
+ Iteration             4  residual:    5.0153211704417147E-008
+ Iteration             5  residual:    7.9933529702654869E-011
+ Iteration             6  residual:    1.2717213308682699E-013
+ Iteration             7  residual:    2.1790798387780098E-016
+ Wall time:    1.2560844421386719E-002
+ x:   -1.0226403871012103E-005   5.0902512156439019E-005
+   0.3334710494981550
+
+$ mpirun -np 4 --map-by ppr:2:socket ./main_gpu_mpi
+ Running parallel version on            4 ranks...
+ rank            0 using GPU            0
+ rank            1 using GPU            1
+ rank            2 using GPU            2
+ rank            3 using GPU            3
+ Running Warmup....
+ Iteration             1  residual:     11.63451702489180
+ Iteration             2  residual:    1.9845558837315834E-002
+ Iteration             3  residual:    3.1534373809098753E-005
+ Iteration             4  residual:    5.0153211704416981E-008
+ Iteration             5  residual:    7.9933529702365899E-011
+ Iteration             6  residual:    1.2717208770659891E-013
+ Iteration             7  residual:    2.1118342771089487E-016
+ Running Test....
+ Iteration             1  residual:     11.63451702489180
+ Iteration             2  residual:    1.9845558837315834E-002
+ Iteration             3  residual:    3.1534373809098753E-005
+ Iteration             4  residual:    5.0153211704416981E-008
+ Iteration             5  residual:    7.9933529702365899E-011
+ Iteration             6  residual:    1.2717208770659891E-013
+ Iteration             7  residual:    2.1118342771089487E-016
+ Wall time:    8.5079669952392578E-003
+ x:   -1.0226403871012100E-005   5.0902512156439019E-005
+```
+
+Comparing the wall times across the runs, we see that the strong scaling efficiency drops quite a bit at 4 GPUs. To understand why, we can profile this case using Nsight Systems using the following command:
+```
+$ mpirun -np 4 --map-by ppr:2:socket nsys profile -o gpu_mpi.rank%q{OMPI_COMM_WORLD_RANK} ./main_gpu_mpi
+```
+This command will generate a profile output for each rank separately, with the `%q{...}` notation in the output string used to add an exported environment variable to the name. Download one of the resulting profiles to to a local system, load it in the Nsight Systems GUI, and look for the `Allreduce` NVTX ranges we've added to show the allreduce time. What you'll find is that the `MPI_Allreduce` is generating a device-to-host copy, followed by a CPU allreduce, followed by a host-to-device copy, which is inefficient and limiting strong scaling.
+```
+
+### Using NCCL
+Instead of using MPI for the allreduce, we can try to use functionality from the NVIDIA Collective Commuincation Library (NCCL) instead. NCCL has highly optimized GPU collectives (e.g. allreduce) as well as support for point-to-point messaging (e.g. send/recv). Replacing `MPI_Allreduce` with `ncclAllReduce` is straightforward as the APIs are very similar. 
+
+First, look at the MPI setup code in `main.f90`. To use NCCL, some additional initialization is required to create a NCCL communicator, and that code is added after the device assignment. Besides this small additional set up, the `MPI_Allreduce` calls in `RunCG` are replaced with calls `ncclAllReduce`.
+
+Type `make` to compile the NCCL parallelized program, `main_gpu_nccl`. To run on the M100 node, use the following command:
+```
+$ mpirun -np <N>  --map-by ppr:2:socket ./main_gpu_nccl
+```
+where `N` can be 1, 2, or 4.
+
+Running for `N` = 1, 2 and 4 results in the following:
+```
+$ mpirun -np 1 --map-by ppr:2:socket ./main_gpu_nccl
+ Running parallel version on            1 ranks...
+ rank            0 using GPU            0
+ Running Warmup....
+ Iteration             1  residual:     11.63451702489180
+ Iteration             2  residual:    1.9845558837315817E-002
+ Iteration             3  residual:    3.1534373809098760E-005
+ Iteration             4  residual:    5.0153211704417186E-008
+ Iteration             5  residual:    7.9933529702152848E-011
+ Iteration             6  residual:    1.2717205406485772E-013
+ Iteration             7  residual:    2.0605670154693845E-016
+ Running Test....
+ Iteration             1  residual:     11.63451702489180
+ Iteration             2  residual:    1.9845558837315817E-002
+ Iteration             3  residual:    3.1534373809098760E-005
+ Iteration             4  residual:    5.0153211704417186E-008
+ Iteration             5  residual:    7.9933529702152848E-011
+ Iteration             6  residual:    1.2717205406485772E-013
+ Iteration             7  residual:    2.0605670154693845E-016
+ Wall time:    2.1223068237304688E-002
+ x:   -1.0226403871012107E-005   5.0902512156439025E-005
+   0.3334710494981550
+
+$ mpirun -np 2 --map-by ppr:2:socket ./main_gpu_nccl
+ Running parallel version on            2 ranks...
+ rank            0 using GPU            0
+ rank            1 using GPU            1
+ Running Warmup....
+ Iteration             1  residual:     11.63451702489180
+ Iteration             2  residual:    1.9845558837315827E-002
+ Iteration             3  residual:    3.1534373809098828E-005
+ Iteration             4  residual:    5.0153211704417147E-008
+ Iteration             5  residual:    7.9933529702654869E-011
+ Iteration             6  residual:    1.2717213308682699E-013
+ Iteration             7  residual:    2.1790798387780098E-016
+ Running Test....
+ Iteration             1  residual:     11.63451702489180
+ Iteration             2  residual:    1.9845558837315827E-002
+ Iteration             3  residual:    3.1534373809098828E-005
+ Iteration             4  residual:    5.0153211704417147E-008
+ Iteration             5  residual:    7.9933529702654869E-011
+ Iteration             6  residual:    1.2717213308682699E-013
+ Iteration             7  residual:    2.1790798387780098E-016
+ Wall time:    1.1735916137695313E-002
+ x:   -1.0226403871012103E-005   5.0902512156439019E-005
+   0.3334710494981550
+
+$ mpirun -np 4 --map-by ppr:2:socket ./main_gpu_nccl
+ Running parallel version on            4 ranks...
+ rank            0 using GPU            0
+ rank            1 using GPU            1
+ rank            2 using GPU            2
+ rank            3 using GPU            3
+ Running Warmup....
+ Iteration             1  residual:     11.63451702489180
+ Iteration             2  residual:    1.9845558837315827E-002
+ Iteration             3  residual:    3.1534373809098713E-005
+ Iteration             4  residual:    5.0153211704416955E-008
+ Iteration             5  residual:    7.9933529702372219E-011
+ Iteration             6  residual:    1.2717208872618989E-013
+ Iteration             7  residual:    2.1133686326639035E-016
+ Running Test....
+ Iteration             1  residual:     11.63451702489180
+ Iteration             2  residual:    1.9845558837315827E-002
+ Iteration             3  residual:    3.1534373809098713E-005
+ Iteration             4  residual:    5.0153211704416955E-008
+ Iteration             5  residual:    7.9933529702372219E-011
+ Iteration             6  residual:    1.2717208872618989E-013
+ Iteration             7  residual:    2.1133686326639035E-016
+ Wall time:    6.9658756256103516E-003
+ x:   -1.0226403871012102E-005   5.0902512156439019E-005
+   0.3334710494981550
+```
+
+Using `ncclAllReduce` in place of `MPI_Allreduce` provides a boost to strong scaling efficiency. To understand why, run a profile with the NCCL parallelized program like with the MPI program and look at the allreduce NVTX range. Unlike `MPI_Allreduce`, `ncclAllReduce` avoids any copies to/from the host and performs the operation on the GPU, resulting in more efficient scaling for this sample code.
