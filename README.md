@@ -260,6 +260,7 @@ $ mpirun -np 4 --map-by ppr:2:socket ./main_gpu_mpi
  Iteration             7  residual:    2.1118342771089487E-016
  Wall time:    8.5079669952392578E-003
  x:   -1.0226403871012100E-005   5.0902512156439019E-005
+   0.3334710494981550
 ```
 
 Comparing the wall times across the runs, we see that the strong scaling efficiency drops quite a bit at 4 GPUs. To understand why, we can profile this case using Nsight Systems using the following command:
